@@ -423,6 +423,22 @@
             color: #dc2626;
         }
 
+        /* Stock status badges */
+        .status-danger {
+            background-color: rgba(220, 38, 38, 0.1);
+            color: #dc2626;
+        }
+
+        .status-warning {
+            background-color: rgba(217, 119, 6, 0.1);
+            color: #d97706;
+        }
+
+        .status-success {
+            background-color: rgba(6, 95, 70, 0.1);
+            color: #065f46;
+        }
+
         /* Quick Actions */
         .quick-actions {
             display: grid;
@@ -848,6 +864,35 @@
             color: var(--text-light);
         }
 
+        /* Toast notification */
+        .toast {
+            position: fixed;
+            top: 100px;
+            right: 30px;
+            padding: 15px 25px;
+            border-radius: 8px;
+            background: var(--card-bg);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            z-index: 3000;
+            animation: slideIn 0.3s ease;
+            border-left: 4px solid;
+            color: var(--text);
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
         /* Responsive */
         @media (max-width: 768px) {
             .header { 
@@ -965,6 +1010,10 @@
                 <a href="products.html" class="nav-item">
                     <i class="fas fa-boxes"></i>
                     Produits
+                </a>
+                <a href="stock.html" class="nav-item">
+                    <i class="fas fa-warehouse"></i>
+                    Stock
                 </a>
                 <a href="settings.html" class="nav-item">
                     <i class="fas fa-cog"></i>
@@ -1509,6 +1558,9 @@
             document.getElementById('clientName').value = '';
             document.getElementById('clientPhone').value = '';
             document.getElementById('clientAddress').value = '';
+            
+            // Vérifier le stock faible
+            checkLowStock();
         }
         
         function closeNewDeliveryModal() {
@@ -1579,13 +1631,34 @@
         }
         
         function selectProduct(product) {
+            // Vérifier le stock disponible
+            const availableStock = getProductStock(product.id);
+            
+            if (availableStock <= 0) {
+                showToast(`Stock épuisé pour ${product.name}`, "error");
+                return;
+            }
+            
             // Vérifier si le produit est déjà sélectionné
             const existingProduct = selectedProducts.find(p => p.id === product.id);
+            
             if (existingProduct) {
+                // Vérifier si nous pouvons ajouter une unité supplémentaire
+                if (existingProduct.quantity + 1 > availableStock) {
+                    showToast(`Stock insuffisant. Disponible: ${availableStock}`, "error");
+                    return;
+                }
+                
                 // Si déjà sélectionné, augmenter la quantité
                 existingProduct.quantity += 1;
                 updateProductInList(existingProduct);
             } else {
+                // Vérifier le stock
+                if (availableStock < 1) {
+                    showToast(`Stock insuffisant pour ${product.name}`, "error");
+                    return;
+                }
+                
                 // Sinon, ajouter le produit avec quantité 1
                 product.quantity = 1;
                 selectedProducts.push(product);
@@ -1629,6 +1702,8 @@
                     </div>
                 </div>
                 <div style="text-align: left; margin-top: 10px;">
+                    <small style="color: var(--text-light);">Stock disponible: <strong>${getProductStock(product.id)}</strong></small>
+                    <br>
                     <small style="color: var(--text-light);">Total: <strong>${(product.quantity * (product.price || 0)).toFixed(2)} DH</strong></small>
                 </div>
             `;
@@ -1644,7 +1719,15 @@
                 
                 const totalElement = productDiv.querySelector('small strong');
                 if (totalElement) {
-                    totalElement.textContent = `${(product.quantity * (product.price || 0)).toFixed(2)} DH`;
+                    const stockText = productDiv.querySelector('small:nth-child(1) strong');
+                    if (stockText) {
+                        stockText.textContent = getProductStock(product.id);
+                    }
+                    
+                    const totalPrice = productDiv.querySelector('small:nth-child(2) strong');
+                    if (totalPrice) {
+                        totalPrice.textContent = `${(product.quantity * (product.price || 0)).toFixed(2)} DH`;
+                    }
                 }
             }
         }
@@ -1665,8 +1748,18 @@
         function updateProductQuantity(productId, quantity) {
             const product = selectedProducts.find(p => p.id === productId);
             if (product) {
-                product.quantity = parseInt(quantity) || 1;
-                updateProductInList(product);
+                const availableStock = getProductStock(productId);
+                const newQuantity = parseInt(quantity) || 1;
+                
+                if (newQuantity > availableStock) {
+                    showToast(`Stock insuffisant. Disponible: ${availableStock}`, "error");
+                    product.quantity = availableStock;
+                    updateProductInList(product);
+                } else {
+                    product.quantity = newQuantity;
+                    updateProductInList(product);
+                }
+                
                 updateTotalAmount();
             }
         }
@@ -1731,6 +1824,16 @@
                 return;
             }
             
+            // Vérifier le stock pour chaque produit
+            for (const product of selectedProducts) {
+                const availableStock = getProductStock(product.id);
+                if (availableStock < product.quantity) {
+                    const productName = products.find(p => p.id === product.id)?.name || product.name;
+                    showToast(`Stock insuffisant pour ${productName}. Stock disponible: ${availableStock}`, "error");
+                    return;
+                }
+            }
+            
             // Récupérer les données du formulaire
             const formData = {
                 clientId: selectedClient.id,
@@ -1779,19 +1882,49 @@
             console.log('Données à sauvegarder:', formData);
             
             if (isDemoMode) {
-                // Mode démo - simuler la sauvegarde
+                // Mode démo - simuler la sauvegarde avec mise à jour du stock
                 showToast("Bon de livraison créé avec succès (mode démo)", "success");
                 closeNewDeliveryModal();
                 
                 // Ajouter à la liste des livraisons locales
                 formData.id = 'demo-' + Date.now();
                 deliveries.unshift(formData);
+                
+                // Mettre à jour le stock en mode démo
+                selectedProducts.forEach(product => {
+                    const productIndex = products.findIndex(p => p.id === product.id);
+                    if (productIndex !== -1) {
+                        if (!products[productIndex].currentStock) {
+                            products[productIndex].currentStock = 100;
+                        }
+                        products[productIndex].currentStock -= product.quantity;
+                        
+                        // Enregistrer le mouvement de stock
+                        const movement = {
+                            productId: product.id,
+                            productName: product.name,
+                            quantity: product.quantity,
+                            type: 'out',
+                            movementType: 'sortie',
+                            reference: formData.bonNumber,
+                            deliveryId: formData.id,
+                            date: new Date().toISOString(),
+                            user: 'admin'
+                        };
+                        
+                        if (!window.demoStockMovements) window.demoStockMovements = [];
+                        window.demoStockMovements.push(movement);
+                    }
+                });
+                
                 updateDashboard();
             } else {
                 // Mode Firebase
                 saveToFirebase(formData);
             }
         }
+        
+        // ==================== GESTION DU STOCK ====================
         
         function saveToFirebase(deliveryData) {
             if (!database) {
@@ -1805,7 +1938,17 @@
                 const newDeliveryRef = database.ref('deliveries').push();
                 deliveryData.id = newDeliveryRef.key;
                 
+                // 1. Enregistrer d'abord le bon de livraison
                 newDeliveryRef.set(deliveryData)
+                    .then(() => {
+                        // 2. Mettre à jour le stock pour chaque produit
+                        const stockPromises = deliveryData.items.map(item => {
+                            return updateStock(item.productId, item.quantity, 'out', deliveryData.bonNumber, deliveryData.id);
+                        });
+                        
+                        // 3. Attendre que toutes les mises à jour de stock soient terminées
+                        return Promise.all(stockPromises);
+                    })
                     .then(() => {
                         showToast("Bon de livraison créé avec succès!", "success");
                         closeNewDeliveryModal();
@@ -1816,12 +1959,157 @@
                     })
                     .catch((error) => {
                         console.error("Erreur d'enregistrement:", error);
-                        showToast("Erreur lors de l'enregistrement", "error");
+                        showToast("Erreur lors de l'enregistrement: " + error, "error");
                     });
                     
             } catch (error) {
                 console.error("Erreur:", error);
                 showToast("Erreur lors de l'enregistrement", "error");
+            }
+        }
+        
+        function updateStock(productId, quantity, type, bonNumber, deliveryId) {
+            return new Promise((resolve, reject) => {
+                if (!database) {
+                    reject("Base de données non connectée");
+                    return;
+                }
+                
+                // Références Firebase
+                const stockRef = database.ref(`stock/${productId}`);
+                const movementRef = database.ref('stockMovements').push();
+                
+                // Récupérer le stock actuel
+                stockRef.once('value')
+                    .then((snapshot) => {
+                        const currentStock = snapshot.val();
+                        let newStock = 0;
+                        
+                        if (currentStock) {
+                            // Stock existant
+                            newStock = type === 'out' 
+                                ? (currentStock.currentStock || 0) - quantity
+                                : (currentStock.currentStock || 0) + quantity;
+                            
+                            if (newStock < 0) {
+                                reject(`Stock insuffisant pour le produit ${productId}`);
+                                return;
+                            }
+                            
+                            // Mettre à jour le stock
+                            return stockRef.update({
+                                currentStock: newStock,
+                                lastUpdated: new Date().toISOString(),
+                                lastMovementId: movementRef.key
+                            });
+                        } else {
+                            // Nouveau produit dans le stock
+                            newStock = type === 'out' ? -quantity : quantity;
+                            
+                            return stockRef.set({
+                                productId: productId,
+                                productName: products.find(p => p.id === productId)?.name || 'Inconnu',
+                                category: products.find(p => p.id === productId)?.category || 'Non catégorisé',
+                                currentStock: newStock,
+                                minStock: 10,
+                                lastUpdated: new Date().toISOString(),
+                                lastMovementId: movementRef.key
+                            });
+                        }
+                    })
+                    .then(() => {
+                        // Enregistrer le mouvement
+                        const product = products.find(p => p.id === productId);
+                        
+                        const movementData = {
+                            id: movementRef.key,
+                            productId: productId,
+                            productName: product?.name || 'Inconnu',
+                            quantity: quantity,
+                            type: type, // 'in' ou 'out'
+                            movementType: type === 'out' ? 'sortie' : 'entrée',
+                            reference: bonNumber,
+                            deliveryId: deliveryId,
+                            date: new Date().toISOString(),
+                            user: 'admin', // Vous pouvez remplacer par l'utilisateur connecté
+                            previousStock: 0, // À calculer si nécessaire
+                            newStock: 0 // À calculer si nécessaire
+                        };
+                        
+                        // Calculer les stocks avant/après
+                        return database.ref(`stock/${productId}/currentStock`).once('value')
+                            .then((stockSnapshot) => {
+                                const currentStock = stockSnapshot.val() || 0;
+                                movementData.newStock = currentStock;
+                                movementData.previousStock = type === 'out' 
+                                    ? currentStock + quantity 
+                                    : currentStock - quantity;
+                                
+                                return movementRef.set(movementData);
+                            });
+                    })
+                    .then(() => {
+                        console.log(`✅ Stock mis à jour pour le produit ${productId}`);
+                        resolve();
+                    })
+                    .catch((error) => {
+                        console.error(`❌ Erreur de mise à jour du stock:`, error);
+                        reject(error);
+                    });
+            });
+        }
+        
+        function initializeStock() {
+            try {
+                const stockRef = database.ref('stock');
+                stockRef.once('value')
+                    .then((snapshot) => {
+                        if (!snapshot.exists()) {
+                            // Initialiser le stock si vide
+                            const initialStock = {};
+                            products.forEach(product => {
+                                initialStock[product.id] = {
+                                    productId: product.id,
+                                    productName: product.name,
+                                    category: product.category,
+                                    currentStock: 100, // Stock initial
+                                    minStock: 10,
+                                    lastUpdated: new Date().toISOString()
+                                };
+                            });
+                            
+                            stockRef.set(initialStock)
+                                .then(() => console.log("✅ Stock initialisé avec succès"))
+                                .catch(error => console.error("❌ Erreur d'initialisation du stock:", error));
+                        }
+                    });
+            } catch (error) {
+                console.error("Erreur d'initialisation du stock:", error);
+            }
+        }
+        
+        function getProductStock(productId) {
+            if (isDemoMode) {
+                const product = products.find(p => p.id === productId);
+                return product?.currentStock || 100;
+            } else {
+                // Pour Firebase, retourner une valeur par défaut
+                // Vous pouvez implémenter une vérification en temps réel si nécessaire
+                return 100;
+            }
+        }
+        
+        function checkLowStock() {
+            if (isDemoMode) {
+                const lowStockProducts = products.filter(p => {
+                    const stock = p.currentStock || 100;
+                    const minStock = p.minStock || 10;
+                    return stock <= minStock;
+                });
+                
+                if (lowStockProducts.length > 0) {
+                    showToast(`⚠️ ${lowStockProducts.length} produit(s) en stock faible`, "warning");
+                }
             }
         }
         
@@ -1957,16 +2245,16 @@
         
         function loadDemoProducts() {
             products = [
-                { id: "prod1", name: "Ciment 50kg", category: "Matériaux", price: 85.50, description: "Ciment Portland 50kg" },
-                { id: "prod2", name: "Sable fin", category: "Matériaux", price: 450.00, description: "Sable fin pour construction" },
-                { id: "prod3", name: "Gravier 5/15", category: "Matériaux", price: 380.00, description: "Gravier pour béton" },
-                { id: "prod4", name: "Briques rouges", category: "Matériaux", price: 2.50, description: "Briques de construction" },
-                { id: "prod5", name: "Tôle galvanisée", category: "Métallique", price: 125.00, description: "Tôle 1m x 2m" },
-                { id: "prod6", name: "Tube PVC 100mm", category: "Plomberie", price: 45.00, description: "Tube PVC diamètre 100mm" },
-                { id: "prod7", name: "Peinture blanche", category: "Peinture", price: 180.00, description: "Peinture acrylique 10L" },
-                { id: "prod8", name: "Carreaux 30x30", category: "Carrelage", price: 85.00, description: "Carreaux céramique" },
-                { id: "prod9", name: "Parpaing 20x40", category: "Matériaux", price: 4.20, description: "Parpaing creux" },
-                { id: "prod10", name: "Lambris PVC", category: "Revêtement", price: 65.00, description: "Lambris pour plafond" }
+                { id: "prod1", name: "Ciment 50kg", category: "Matériaux", price: 85.50, description: "Ciment Portland 50kg", currentStock: 45, minStock: 10 },
+                { id: "prod2", name: "Sable fin", category: "Matériaux", price: 450.00, description: "Sable fin pour construction", currentStock: 120, minStock: 20 },
+                { id: "prod3", name: "Gravier 5/15", category: "Matériaux", price: 380.00, description: "Gravier pour béton", currentStock: 85, minStock: 15 },
+                { id: "prod4", name: "Briques rouges", category: "Matériaux", price: 2.50, description: "Briques de construction", currentStock: 5000, minStock: 500 },
+                { id: "prod5", name: "Tôle galvanisée", category: "Métallique", price: 125.00, description: "Tôle 1m x 2m", currentStock: 25, minStock: 5 },
+                { id: "prod6", name: "Tube PVC 100mm", category: "Plomberie", price: 45.00, description: "Tube PVC diamètre 100mm", currentStock: 60, minStock: 10 },
+                { id: "prod7", name: "Peinture blanche", category: "Peinture", price: 180.00, description: "Peinture acrylique 10L", currentStock: 35, minStock: 8 },
+                { id: "prod8", name: "Carreaux 30x30", category: "Carrelage", price: 85.00, description: "Carreaux céramique", currentStock: 200, minStock: 50 },
+                { id: "prod9", name: "Parpaing 20x40", category: "Matériaux", price: 4.20, description: "Parpaing creux", currentStock: 800, minStock: 100 },
+                { id: "prod10", name: "Lambris PVC", category: "Revêtement", price: 65.00, description: "Lambris pour plafond", currentStock: 75, minStock: 15 }
             ];
             
             // Extraire les catégories
@@ -1997,6 +2285,10 @@
             
             let html = '';
             productsList.forEach(product => {
+                const stock = getProductStock(product.id);
+                const stockClass = stock <= 10 ? 'danger' : stock <= 20 ? 'warning' : 'success';
+                const stockText = stock > 0 ? `${stock} disponibles` : 'Épuisé';
+                
                 html += `
                     <div class="selection-item" onclick="selectProduct(${JSON.stringify(product).replace(/"/g, '&quot;')})">
                         <div class="info">
@@ -2004,6 +2296,12 @@
                             <div class="details">
                                 <span class="category">${product.category || 'Non catégorisé'}</span>
                                 ${product.description ? `<div>${product.description}</div>` : ''}
+                                <div style="margin-top: 5px;">
+                                    <span class="status-badge status-${stockClass}">
+                                        <i class="fas fa-${stock <= 10 ? 'exclamation-triangle' : 'box'}"></i>
+                                        ${stockText}
+                                    </span>
+                                </div>
                             </div>
                         </div>
                         <div class="price">${(product.price || 0).toFixed(2)} DH</div>
@@ -2338,6 +2636,11 @@
                             }
                         });
                         console.log(`✅ ${products.length} produits chargés`);
+                        
+                        // Initialiser le système de stock
+                        if (!isDemoMode) {
+                            initializeStock();
+                        }
                     }
                     loadDeliveries();
                 });
